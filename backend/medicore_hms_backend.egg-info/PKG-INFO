@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: medicore-hms-backend
+Version: 0.1.0
+Summary: MediCore HMS modular monolith backend (Phase 0 foundation)
+Requires-Python: >=3.13
+Requires-Dist: fastapi==0.115.6
+Requires-Dist: uvicorn[standard]==0.32.1
+Requires-Dist: pydantic==2.10.3
+Requires-Dist: pydantic-settings==2.6.1
+Requires-Dist: sqlalchemy[asyncio]==2.0.36
+Requires-Dist: asyncpg==0.30.0
+Requires-Dist: psycopg[binary]==3.2.3
+Requires-Dist: alembic==1.14.0
+Requires-Dist: redis==5.2.0
+Requires-Dist: boto3==1.35.76
+Requires-Dist: structlog==24.4.0
+Provides-Extra: dev
+Requires-Dist: pytest==8.3.4; extra == "dev"
+Requires-Dist: pytest-asyncio==0.24.0; extra == "dev"
+Requires-Dist: httpx==0.28.1; extra == "dev"
+Requires-Dist: ruff==0.8.2; extra == "dev"
+Requires-Dist: mypy==1.13.0; extra == "dev"

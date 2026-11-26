@@ -1,0 +1,110 @@
+name: MediCore HMS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-quality-and-tests:
+    name: Backend Lint, Typecheck, Migration & Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: medicore_hms_test
+          POSTGRES_USER: medicore_migrator
+          POSTGRES_PASSWORD: test_migrator_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+      - name: Ruff lint & format check
+        run: ruff check app tests && ruff format --check app tests
+      - name: Mypy static type check
+        run: mypy app
+      - name: Verify Alembic migrations
+        env:
+          DATABASE_MIGRATION_URL: postgresql+psycopg://medicore_migrator:test_migrator_password@localhost:5432/medicore_hms_test
+        run: alembic upgrade head
+      - name: Run Pytest suite
+        env:
+          APP_ENV: test
+          SECRET_KEY: ci-test-secret-key-minimum-32-characters-long
+          DATABASE_URL: postgresql+asyncpg://medicore_migrator:test_migrator_password@localhost:5432/medicore_hms_test
+          DATABASE_MIGRATION_URL: postgresql+psycopg://medicore_migrator:test_migrator_password@localhost:5432/medicore_hms_test
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest -v
+
+  frontend-quality-and-build:
+    name: Frontend Lint, Typecheck, Tests & Production Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: TypeScript strict type check
+        run: npm run typecheck
+      - name: ESLint check
+        run: npm run lint
+      - name: Vitest unit & component tests
+        run: npm run test
+      - name: Production build (Phase 0 previews excluded)
+        env:
+          VITE_ENABLE_PHASE0_PREVIEWS: "false"
+        run: npm run build
+
+  security-and-dependency-scan:
+    name: Secret & Dependency Vulnerability Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Python dependency audit
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.lock
+      - name: Node dependency audit
+        run: cd frontend && npm audit --audit-level=high

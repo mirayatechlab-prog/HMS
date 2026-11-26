@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    container_name: medicore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-medicore_hms}
+      POSTGRES_USER: ${POSTGRES_MIGRATOR_USER:-medicore_migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:-dev_migrator_password_change_me}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-medicore_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-dev_app_password_change_me}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - medicore_pg_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_MIGRATOR_USER:-medicore_migrator} -d ${POSTGRES_DB:-medicore_hms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    container_name: medicore-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - medicore_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  s3:
+    image: chrislusf/seaweedfs:latest@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
+    container_name: medicore-s3
+    restart: unless-stopped
+    command: ["server", "-s3", "-s3.port=9000", "-dir=/data"]
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - medicore_s3_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medicore-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-medicore_app}:${POSTGRES_APP_PASSWORD:-dev_app_password_change_me}@postgres:5432/${POSTGRES_DB:-medicore_hms}
+      DATABASE_MIGRATION_URL: postgresql+psycopg://${POSTGRES_MIGRATOR_USER:-medicore_migrator}:${POSTGRES_MIGRATOR_PASSWORD:-dev_migrator_password_change_me}@postgres:5432/${POSTGRES_DB:-medicore_hms}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://s3:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medicore-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      VITE_ENABLE_PHASE0_PREVIEWS: "true"
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  medicore_pg_data:
+  medicore_redis_data:
+  medicore_s3_data:
